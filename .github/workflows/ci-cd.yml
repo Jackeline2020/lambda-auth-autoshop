@@ -1,0 +1,63 @@
+name: CI/CD - lambda-auth
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+
+  terraform-validate:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - run: terraform -chdir=terraform init -backend=false
+      - run: terraform -chdir=terraform validate
+
+  # Desligado por padrão (mesmo padrão do repositório principal:
+  # AWS_DEPLOY_ENABLED). O código fica revisado via terraform-validate em
+  # todo PR, mas só aplica de verdade se a variável do repositório for
+  # explicitamente ligada.
+  deploy:
+    runs-on: ubuntu-latest
+    needs: terraform-validate
+    if: github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ENABLED == 'true'
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Compilar o binário da Lambda (runtime provided.al2023)
+        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bootstrap main.go
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - run: terraform -chdir=terraform init
+      - run: terraform -chdir=terraform apply -auto-approve -var="jwt_secret=${{ secrets.JWT_SECRET }}"
