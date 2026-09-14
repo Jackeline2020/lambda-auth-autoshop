@@ -11,9 +11,12 @@ import (
 var ErrNotFound = errors.New("cliente não encontrado")
 
 type Customer struct {
-	ID   string
-	Name string
+	ID     string
+	Name   string
+	Status string
 }
+
+const StatusActive = "ativo"
 
 type Repository struct {
 	db *pgxpool.Pool
@@ -30,13 +33,13 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 // pontuação.
 func (r *Repository) FindByCPF(ctx context.Context, digitsOnlyCPF string) (Customer, error) {
 	row := r.db.QueryRow(ctx, `
-		SELECT id, name
+		SELECT id, name, status
 		FROM customers
 		WHERE regexp_replace(cpf, '\D', '', 'g') = $1
 	`, digitsOnlyCPF)
 
 	var c Customer
-	if err := row.Scan(&c.ID, &c.Name); err != nil {
+	if err := row.Scan(&c.ID, &c.Name, &c.Status); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Customer{}, ErrNotFound
 		}

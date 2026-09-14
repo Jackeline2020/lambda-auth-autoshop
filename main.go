@@ -3,24 +3,17 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 
-	"lambda-auth/internal/auth"
+	"lambda-auth/internal/authflow"
 	"lambda-auth/internal/config"
-	"lambda-auth/internal/customer"
-	"lambda-auth/internal/validator"
 )
 
 type authRequest struct {
 	CPF string `json:"cpf"`
-}
-
-type authResponse struct {
-	Token string `json:"token"`
 }
 
 type errorResponse struct {
@@ -32,35 +25,17 @@ type errorResponse struct {
 // — abrir uma conexão nova a cada chamada seria caro e desnecessário.
 var db = config.NewPostgresPool()
 
-// handler implementa o fluxo de autenticação por CPF exigido pela Fase 3:
-// recebe o CPF, confirma que existe um cliente cadastrado com ele, e emite
-// um JWT. Não há senha — a identificação é só o CPF, igual a um totem de
-// autoatendimento.
+// handler é o entrypoint de produção (API Gateway → Lambda). A regra de
+// negócio em si mora em internal/authflow — ver cmd/local/main.go pro
+// entrypoint equivalente usado em desenvolvimento local.
 func handler(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 	var body authRequest
 	if err := json.Unmarshal([]byte(req.Body), &body); err != nil {
 		return respond(http.StatusBadRequest, errorResponse{Message: "corpo da requisição inválido"})
 	}
 
-	if !validator.IsValidCPF(body.CPF) {
-		return respond(http.StatusBadRequest, errorResponse{Message: "CPF inválido"})
-	}
-
-	repo := customer.NewRepository(db)
-	c, err := repo.FindByCPF(ctx, validator.OnlyDigits(body.CPF))
-	if err != nil {
-		if errors.Is(err, customer.ErrNotFound) {
-			return respond(http.StatusNotFound, errorResponse{Message: "cliente não encontrado"})
-		}
-		return respond(http.StatusInternalServerError, errorResponse{Message: "erro ao consultar cliente"})
-	}
-
-	token, err := auth.GenerateToken(c.ID, "customer")
-	if err != nil {
-		return respond(http.StatusInternalServerError, errorResponse{Message: "erro ao gerar token"})
-	}
-
-	return respond(http.StatusOK, authResponse{Token: token})
+	res := authflow.Authenticate(ctx, db, body.CPF)
+	return respond(res.Status, res.Body)
 }
 
 func respond(status int, payload any) (events.APIGatewayV2HTTPResponse, error) {
