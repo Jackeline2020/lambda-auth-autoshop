@@ -63,7 +63,7 @@ resource "aws_iam_role_policy_attachment" "lambda_vpc" {
 # --- Rede: a Lambda precisa estar na mesma VPC do RDS ---
 resource "aws_security_group" "lambda" {
   name        = "autoshop-lambda-auth"
-  description = "Permite a Lambda de auth alcançar o Postgres (RDS) na porta 5432"
+  description = "Allows the auth Lambda to reach Postgres (RDS) on port 5432"
   vpc_id      = data.aws_vpc.default.id
 
   egress {
