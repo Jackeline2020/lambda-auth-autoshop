@@ -146,9 +146,8 @@ acesso liberado na porta 5432 do banco.
 
 1. **test** — `go test ./...`.
 2. **terraform-validate** — valida o Terraform em toda PR.
-3. **deploy** — (se a variável de repositório `AWS_DEPLOY_ENABLED=true`)
-   compila o `bootstrap` e roda `terraform apply` contra a AWS real —
-   desligado por padrão, pra não gerar custo sem querer em todo push.
+3. **deploy** — compila o `bootstrap` e roda `terraform apply` contra a
+   AWS real, controlado pela variável de repositório `AWS_DEPLOY_ENABLED`.
 
 Secrets necessários: `AWS_ROLE_ARN`, `JWT_SECRET`.
 Variável: `AWS_DEPLOY_ENABLED`.
