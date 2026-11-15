@@ -1,16 +1,21 @@
 # lambda-auth-autoshop
 
-Function Serverless de autenticação por CPF, exigida pela Fase 3. Não é
-login com senha: o cliente informa o CPF, a function confirma que existe um
-cadastro com esse CPF no banco (mesma tabela `customers` usada pelo
-`app-autoshop`) e devolve um JWT — o mesmo formato de token que a API
-principal já sabe validar (`pkg/auth/jwt.go` do `app-autoshop`).
+Function Serverless de autenticação por CPF. Não é login com senha: o
+cliente informa o CPF, a function confirma no OS Service (`app-autoshop`)
+que existe um cliente ativo com esse CPF e devolve um JWT, no mesmo formato
+que a API principal valida (`pkg/auth/jwt.go` do `app-autoshop`).
 
-Este é o repositório 1 dos 4 exigidos pela Fase 3 do Tech Challenge. Os
-outros três: [`app-autoshop`](https://github.com/Jackeline2020/app-autoshop)
-(aplicação), [`infra-k8s-autoshop`](https://github.com/Jackeline2020/infra-k8s-autoshop)
+O cadastro de clientes pertence ao OS Service, e cada serviço tem o próprio
+banco. Por isso a function não acessa banco nenhum: consulta a rota interna
+`GET /internal/customers/by-cpf/{cpf}` do OS Service, que só aceita tokens
+de serviço (role `service`).
+
+Repositórios relacionados: [`app-autoshop`](https://github.com/Jackeline2020/app-autoshop)
+(OS Service e orquestrador da Saga), [`execution-autoshop`](https://github.com/Jackeline2020/execution-autoshop),
+[`billing-autoshop`](https://github.com/Jackeline2020/billing-autoshop),
+[`infra-k8s-autoshop`](https://github.com/Jackeline2020/infra-k8s-autoshop)
 (cluster Kubernetes) e [`infra-db-autoshop`](https://github.com/Jackeline2020/infra-db-autoshop)
-(banco gerenciado).
+(bancos gerenciados).
 
 ## Arquitetura deste repositório
 
@@ -25,16 +30,14 @@ flowchart TB
     Cliente(["Cliente"])
     APIGW["API Gateway (HTTP API)"]
     Lambda["Lambda<br/>runtime provided.al2023"]
-    RDS[("RDS PostgreSQL<br/>provisionado pelo infra-db-autoshop")]
-    App["app-autoshop<br/>valida o JWT emitido aqui"]
+    App["app-autoshop (OS Service)<br/>dono do cadastro de clientes;<br/>valida o JWT emitido aqui"]
 
     Cliente -->|"POST /auth { cpf }"| APIGW --> Lambda
     Code --> Lambda
     TF -->|"terraform apply"| Lambda
     TF -->|"terraform apply"| APIGW
-    Lambda -->|"SELECT customer"| RDS
-    Lambda -.->|"JWT (mesmo formato validado por"| App
-    Local -.->|"mesma lógica de authflow,<br/>sem depender de deploy"| RDS
+    Lambda -->|"GET /internal/customers/by-cpf/{cpf}<br/>(token de serviço)"| App
+    Local -.->|"mesma lógica de authflow,<br/>sem depender de deploy"| App
 ```
 
 A regra de negócio (validar CPF, checar existência e status do cliente,
@@ -61,7 +64,7 @@ Respostas:
 | Corpo da requisição malformado | 400 | `{"message": "corpo da requisição inválido"}` |
 | CPF válido mas não cadastrado | 404 | `{"message": "cliente não encontrado"}` |
 | CPF válido, cliente inativo | 403 | `{"message": "cliente inativo"}` |
-| Erro de banco/token | 500 | `{"message": "..."}` |
+| OS Service indisponível ou erro ao gerar o token | 500 | `{"message": "..."}` |
 
 O token gerado tem `user_id` (o ID do cliente) e `role: "customer"`, expira
 em 24h, e é validado pelo `app-autoshop` com o mesmo `JWT_SECRET` — ver
@@ -91,20 +94,19 @@ dele.
 - Go, runtime `provided.al2023` (binário `bootstrap`)
 - AWS Lambda, API Gateway (HTTP API)
 - Terraform (provider `aws`)
-- `pgx` (mesmo driver PostgreSQL do `app-autoshop`), AWS Secrets Manager
+- Cliente HTTP da biblioteca padrão para consultar o OS Service
 
 ## Pré-requisitos
 
 - Go 1.26+
 - Terraform >= 1.5
-- `infra-db-autoshop` já aplicado (precisa do secret `autoshop/rds/credentials`)
+- OS Service (`app-autoshop`) no ar, com a rota interna acessível pela function
 
 ## Variáveis de ambiente (injetadas pelo Terraform em runtime)
 
 | Variável | Origem |
 |---|---|
-| `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | Lidas do secret `autoshop/rds/credentials` no Secrets Manager via `data "aws_secretsmanager_secret_version"` |
-| `DB_SSLMODE` | Fixo em `require` — a Lambda sempre fala com o RDS real, nunca com um Postgres local |
+| `OS_SERVICE_URL` | Variável Terraform `os_service_url`, vinda da variável de repositório `OS_SERVICE_URL`. Endereço do OS Service |
 | `JWT_SECRET` | Passado como variável Terraform (`-var="jwt_secret=..."`), vinda do GitHub Secret `JWT_SECRET` deste repositório. **Precisa ter o mesmo valor no `app-autoshop`**, senão a API principal não consegue validar os tokens que esta Lambda emite |
 
 ## Execução local (sem deploy)
@@ -116,8 +118,8 @@ curl -X POST http://localhost:8081/auth -H "Content-Type: application/json" -d '
 ```
 
 Sobe o mesmo fluxo de `internal/authflow` como um servidor HTTP comum na
-porta `:8081`, contra o Postgres configurado no `.env` — sem precisar de
-deploy AWS pra testar o fluxo completo.
+porta `:8081`, consultando o OS Service configurado em `OS_SERVICE_URL`
+(por padrão, o `app-autoshop` rodando localmente na porta 8080).
 
 ## Testes
 
@@ -132,15 +134,9 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bootstrap main.go
 
 cd terraform
 terraform init
-terraform plan -var="jwt_secret=<mesmo-valor-do-app-autoshop>"
-terraform apply -var="jwt_secret=<mesmo-valor-do-app-autoshop>"
+terraform plan -var="jwt_secret=<mesmo-valor-do-app-autoshop>" -var="os_service_url=<endereço do OS Service>"
+terraform apply -var="jwt_secret=<mesmo-valor-do-app-autoshop>" -var="os_service_url=<endereço do OS Service>"
 ```
-
-Depois do primeiro apply, copie o output `lambda_security_group_id` pra
-variável `additional_db_ingress_security_group_ids` do Terraform em
-`infra-db-autoshop`, e rode `terraform apply` lá de novo — é a única forma
-da Lambda (que roda dentro da VPC, obrigatório pra alcançar o RDS) ter
-acesso liberado na porta 5432 do banco.
 
 ## Pipeline CI/CD (`.github/workflows/ci-cd.yml`)
 
@@ -150,4 +146,4 @@ acesso liberado na porta 5432 do banco.
    AWS real, controlado pela variável de repositório `AWS_DEPLOY_ENABLED`.
 
 Secrets necessários: `AWS_ROLE_ARN`, `JWT_SECRET`.
-Variável: `AWS_DEPLOY_ENABLED`.
+Variáveis: `AWS_DEPLOY_ENABLED`, `OS_SERVICE_URL`.

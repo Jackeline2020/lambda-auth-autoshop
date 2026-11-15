@@ -10,6 +10,7 @@ import (
 
 	"lambda-auth/internal/authflow"
 	"lambda-auth/internal/config"
+	"lambda-auth/internal/customer"
 )
 
 type authRequest struct {
@@ -20,10 +21,10 @@ type errorResponse struct {
 	Message string `json:"message"`
 }
 
-// db é criado uma única vez, fora do handler: o Lambda reaproveita o mesmo
-// container (e portanto a mesma pool de conexão) entre invocações "quentes"
-// — abrir uma conexão nova a cada chamada seria caro e desnecessário.
-var db = config.NewPostgresPool()
+// O cliente HTTP é criado uma única vez, fora do handler: a Lambda
+// reaproveita o mesmo container (e as conexões abertas) entre invocações.
+// O cadastro de clientes é do OS Service; a função não acessa o banco dele.
+var customers = customer.NewClient(config.Env("OS_SERVICE_URL", "http://localhost:8080"))
 
 // handler é o entrypoint de produção (API Gateway → Lambda). A regra de
 // negócio em si mora em internal/authflow — ver cmd/local/main.go pro
@@ -34,7 +35,7 @@ func handler(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.AP
 		return respond(http.StatusBadRequest, errorResponse{Message: "corpo da requisição inválido"})
 	}
 
-	res := authflow.Authenticate(ctx, db, body.CPF)
+	res := authflow.Authenticate(ctx, customers, body.CPF)
 	return respond(res.Status, res.Body)
 }
 

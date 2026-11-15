@@ -9,13 +9,12 @@
 //
 // Como usar (na raiz deste repositório):
 //
-//	export DB_HOST=localhost DB_PORT=5432 DB_USER=autoshop DB_PASSWORD=autoshop DB_NAME=autoshop DB_SSLMODE=disable
+//	export OS_SERVICE_URL=http://localhost:8080
 //	export JWT_SECRET=<o mesmo valor usado no .env do app-autoshop>
 //	go run ./cmd/local
 //
-// (os valores de DB_* acima são os do Postgres do docker-compose do
-// app-autoshop — suba-o primeiro com "docker compose up" lá, e cadastre
-// pelo menos um cliente para ter um CPF válido pra testar.)
+// (o app-autoshop precisa estar rodando, com pelo menos um cliente
+// cadastrado para ter um CPF válido pra testar.)
 //
 //	curl -X POST http://localhost:8081/auth -d '{"cpf":"<cpf de um cliente cadastrado>"}'
 //
@@ -31,6 +30,7 @@ import (
 
 	"lambda-auth/internal/authflow"
 	"lambda-auth/internal/config"
+	"lambda-auth/internal/customer"
 )
 
 type authRequest struct {
@@ -38,8 +38,7 @@ type authRequest struct {
 }
 
 func main() {
-	db := config.NewPostgresPool()
-	defer db.Close()
+	customers := customer.NewClient(config.Env("OS_SERVICE_URL", "http://localhost:8080"))
 
 	http.HandleFunc("/auth", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -55,7 +54,7 @@ func main() {
 			return
 		}
 
-		res := authflow.Authenticate(r.Context(), db, body.CPF)
+		res := authflow.Authenticate(r.Context(), customers, body.CPF)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(res.Status)
 		_ = json.NewEncoder(w).Encode(res.Body)

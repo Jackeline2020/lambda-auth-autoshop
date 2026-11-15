@@ -10,8 +10,7 @@ variable "jwt_secret" {
   sensitive   = true
 }
 
-variable "db_secret_name" {
-  description = "Nome do secret no Secrets Manager com as credenciais do RDS, criado pelo repositório infra-db (ver infra/aws/rds.tf: aws_secretsmanager_secret.db)"
+variable "os_service_url" {
+  description = "Endereço do OS Service (app-autoshop), consultado na rota interna GET /internal/customers/by-cpf/{cpf}"
   type        = string
-  default     = "autoshop/rds/credentials"
 }
