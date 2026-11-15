@@ -60,4 +60,4 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
 
       - run: terraform -chdir=terraform init
-      - run: terraform -chdir=terraform apply -auto-approve -var="jwt_secret=${{ secrets.JWT_SECRET }}"
+      - run: terraform -chdir=terraform apply -auto-approve -var="jwt_secret=${{ secrets.JWT_SECRET }}" -var="os_service_url=${{ vars.OS_SERVICE_URL }}"

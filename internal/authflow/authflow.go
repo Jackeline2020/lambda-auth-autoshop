@@ -19,9 +19,13 @@ import (
 	"lambda-auth/internal/auth"
 	"lambda-auth/internal/customer"
 	"lambda-auth/internal/validator"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// CustomerFinder consulta o cliente pelo CPF (customer.Client, que chama o
+// OS Service).
+type CustomerFinder interface {
+	FindByCPF(ctx context.Context, cpf string) (customer.Customer, error)
+}
 
 // Response é neutra em relação ao transporte (HTTP comum ou API Gateway) —
 // cada entrypoint converte isso pro formato que precisa.
@@ -38,13 +42,12 @@ type tokenBody struct {
 	Token string `json:"token"`
 }
 
-func Authenticate(ctx context.Context, db *pgxpool.Pool, cpf string) Response {
+func Authenticate(ctx context.Context, customers CustomerFinder, cpf string) Response {
 	if !validator.IsValidCPF(cpf) {
 		return Response{Status: 400, Body: errorBody{Message: "CPF inválido"}}
 	}
 
-	repo := customer.NewRepository(db)
-	c, err := repo.FindByCPF(ctx, validator.OnlyDigits(cpf))
+	c, err := customers.FindByCPF(ctx, validator.OnlyDigits(cpf))
 	if err != nil {
 		if errors.Is(err, customer.ErrNotFound) {
 			return Response{Status: 404, Body: errorBody{Message: "cliente não encontrado"}}
