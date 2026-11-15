@@ -1,28 +1,3 @@
-# Credenciais do RDS — criadas pelo repositório infra-db (Secrets Manager).
-# lambda-auth só lê o secret existente, não cria nem gerencia o banco.
-data "aws_secretsmanager_secret" "db" {
-  name = var.db_secret_name
-}
-
-data "aws_secretsmanager_secret_version" "db" {
-  secret_id = data.aws_secretsmanager_secret.db.id
-}
-
-locals {
-  db_credentials = jsondecode(data.aws_secretsmanager_secret_version.db.secret_string)
-}
-
-data "aws_vpc" "default" {
-  default = true
-}
-
-data "aws_subnets" "default" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
-  }
-}
-
 # --- Empacotamento do binário ---
 # O binário "bootstrap" (runtime provided.al2023, ver README.md) precisa
 # existir antes do apply — o workflow de CI/CD compila com
@@ -52,32 +27,6 @@ resource "aws_iam_role_policy_attachment" "lambda_logs" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-# Necessário porque a Lambda roda dentro da VPC (para alcançar o RDS, que
-# não é público) — sem essa policy gerenciada, o Lambda não consegue criar
-# as interfaces de rede (ENIs) exigidas pelo vpc_config abaixo.
-resource "aws_iam_role_policy_attachment" "lambda_vpc" {
-  role       = aws_iam_role.lambda_exec.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
-}
-
-# --- Rede: a Lambda precisa estar na mesma VPC do RDS ---
-resource "aws_security_group" "lambda" {
-  name        = "autoshop-lambda-auth"
-  description = "Allows the auth Lambda to reach Postgres (RDS) on port 5432"
-  vpc_id      = data.aws_vpc.default.id
-
-  egress {
-    from_port   = 5432
-    to_port     = 5432
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Project = "autoshop"
-  }
-}
-
 # --- Lambda ---
 resource "aws_lambda_function" "auth" {
   function_name = "autoshop-lambda-auth"
@@ -92,22 +41,12 @@ resource "aws_lambda_function" "auth" {
 
   environment {
     variables = {
-      DB_HOST     = local.db_credentials.host
-      DB_PORT     = tostring(local.db_credentials.port)
-      DB_NAME     = local.db_credentials.dbname
-      DB_USER     = local.db_credentials.username
-      DB_PASSWORD = local.db_credentials.password
-      DB_SSLMODE  = "require"
-      JWT_SECRET  = var.jwt_secret
+      # O cadastro de clientes é do OS Service: a função consulta a rota
+      # interna dele e não acessa nenhum banco (por isso não roda na VPC)
+      OS_SERVICE_URL = var.os_service_url
+      JWT_SECRET     = var.jwt_secret
     }
   }
-
-  vpc_config {
-    subnet_ids         = data.aws_subnets.default.ids
-    security_group_ids = [aws_security_group.lambda.id]
-  }
-
-  depends_on = [aws_iam_role_policy_attachment.lambda_vpc]
 }
 
 # --- API Gateway (HTTP API — mais simples e mais barato que REST API pra
