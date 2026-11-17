@@ -63,27 +63,25 @@ Respostas:
 | CPF com formato/dígito verificador inválido | 400 | `{"message": "CPF inválido"}` |
 | Corpo da requisição malformado | 400 | `{"message": "corpo da requisição inválido"}` |
 | CPF válido mas não cadastrado | 404 | `{"message": "cliente não encontrado"}` |
-| CPF válido, cliente inativo | 403 | `{"message": "cliente inativo"}` |
+| CPF válido, cliente inativo | 403 | `{"message": "cliente inativo — procure a oficina"}` |
 | OS Service indisponível ou erro ao gerar o token | 500 | `{"message": "..."}` |
 
 O token gerado tem `user_id` (o ID do cliente) e `role: "customer"`, expira
 em 24h, e é validado pelo `app-autoshop` com o mesmo `JWT_SECRET` — ver
 [RFC-003](https://github.com/Jackeline2020/app-autoshop/blob/main/docs/rfc/RFC-003-estrategia-autenticacao.md)
 no repositório `app-autoshop` para a justificativa completa da estratégia
-de autenticação. Não há Swagger/OpenAPI aqui (é um único endpoint) — o
-contrato de request/response está documentado na tabela acima e pode ser
-testado direto com o `curl` acima ou importado no Insomnia/Postman a partir
-dele.
+de autenticação. Por ser um único endpoint, não há Swagger: o contrato
+está na tabela acima.
 
 ## Por que Lambda + API Gateway
 
 - **Lambda**: o caso de uso é uma chamada isolada, sem estado, de baixíssimo
   volume comparado à API principal — não justifica manter um serviço
   sempre ligado, e sem custo de execução parada (paga só por invocação).
-- **API Gateway (HTTP API, não REST API)**: só precisamos de uma rota
-  (`POST /auth`) com proxy direto pra Lambda — o modelo REST API do API
-  Gateway traz recursos (API keys, request validation embutido, etc.) que
-  não usamos aqui e custam mais caro por requisição.
+- **API Gateway (HTTP API, não REST API)**: há uma única rota
+  (`POST /auth`) com proxy direto para a Lambda. O modelo REST API traz
+  recursos (API keys, validação de requisição) que não são usados aqui e
+  custa mais por requisição.
 - **`provided.al2023` (custom runtime) em vez de um runtime Go gerenciado**:
   a AWS descontinuou o runtime gerenciado `go1.x` — hoje o caminho oficial
   pra Go é compilar um binário chamado `bootstrap` e rodar em cima do
@@ -106,8 +104,8 @@ dele.
 
 | Variável | Origem |
 |---|---|
-| `OS_SERVICE_URL` | Variável Terraform `os_service_url`, vinda da variável de repositório `OS_SERVICE_URL`. Endereço do OS Service |
-| `JWT_SECRET` | Passado como variável Terraform (`-var="jwt_secret=..."`), vinda do GitHub Secret `JWT_SECRET` deste repositório. **Precisa ter o mesmo valor no `app-autoshop`**, senão a API principal não consegue validar os tokens que esta Lambda emite |
+| `OS_SERVICE_URL` | Variável Terraform `os_service_url` (`-var`). Endereço do OS Service |
+| `JWT_SECRET` | Variável Terraform `jwt_secret` (`-var`). **Precisa ter o mesmo valor do `app-autoshop`**, senão os serviços não validam os tokens emitidos aqui |
 
 ## Execução local (sem deploy)
 
@@ -142,8 +140,10 @@ terraform apply -var="jwt_secret=<mesmo-valor-do-app-autoshop>" -var="os_service
 
 1. **test** — `go test ./...`.
 2. **terraform-validate** — valida o Terraform em toda PR.
-3. **deploy** — compila o `bootstrap` e roda `terraform apply` contra a
-   AWS real, controlado pela variável de repositório `AWS_DEPLOY_ENABLED`.
+3. **deploy** — compila o `bootstrap` e roda `terraform apply`, habilitado
+   pela variável `AWS_DEPLOY_ENABLED`. Fica desligado: o state do
+   Terraform é local, e a Lambda é aplicada a partir da máquina de quem
+   administra o ambiente (seção "Build e deploy").
 
-Secrets necessários: `AWS_ROLE_ARN`, `JWT_SECRET`.
+Secrets usados pelo job: `AWS_ROLE_ARN`, `JWT_SECRET`.
 Variáveis: `AWS_DEPLOY_ENABLED`, `OS_SERVICE_URL`.
